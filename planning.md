@@ -103,9 +103,9 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| search_listings | No results match the query | |
-| suggest_outfit | Wardrobe is empty | |
-| create_fit_card | Outfit input is missing or incomplete | |
+| search_listings | No results match the query | Agent asks the User to refine/adjust their Search Criteria |
+| suggest_outfit | Wardrobe is empty | Agent offers a General Styling Advice for the selected Item |
+| create_fit_card | Outfit input is missing or incomplete | Agent returns a Descriptive Error Message, instead of raising an Exception |
 
 ---
 
@@ -168,8 +168,10 @@ Planning Loop ──────────────────────
      before trusting it" is a plan. -->
 
 **Milestone 3 — Individual tool implementations:**
+The AI Tool that I'll be using is Calude, to implement each Tool Individually. The Inputs that I'll be giving is the [Tools] Section of planning.md, along with the Tool Information provided in tools.py. I expect Claude to generate the Implementations, using the provided specifications/information To verify, I will test each Tool individually, using both the normal and the failure-case Inputs to ensure the Returned Values, matches the Requirements.
 
 **Milestone 4 — Planning loop and state management:**
+The AI Tool that I'll be using is Claude to implement the Planning Loop and State Management Logic, and ChatGPT to to help me refine the Prompts, Documentations, and Explanations. The Input's that I'll be providing are the [Planning Loop], [State Management], [Error Handling], and [Architecture] Sections of my planning.md. I expect Claude to generate a Planning Loop that correctly decides which Tool to call next based on the Current State and Tool Outputs. To verify, I will test Multiple User Queries, including Successful Searches, Empty Search Results, and Emoty Wardrobes, to Confirm whether or not the Agent follows the Correct Workflow and Handles the Errors as specified.
 
 ---
 
@@ -181,11 +183,11 @@ Write out what a full user interaction looks like from start to finish — tool 
 
 **Step 1:**
 <!-- What does the agent do first? Which tool is called? With what input? -->
-The Agent firts calls the Tool "search_listings(description, size, max_price)", in order to find the Items that mathches the User's Request. The Tool returns a list of matching listing dicts, that is sorted by relevance. If there are no listings found, the Tool then returns an Empty List, which does not raise an exception. The Agent informs the User that there are no matches were found and suggests adjusting their Query.
+The Agent first calls the Tool "search_listings(description, size, max_price)", in order to find the Items that mathches the User's Request. The Tool returns a list of matching listing dicts, that is sorted by relevance. If there are no listings found, the Tool then returns an Empty List, which does not raise an exception. The Agent informs the User that there are no matches were found and suggests adjusting their Query.
 
 **Step 2:**
 <!-- What happens next? What was returned from step 1? What tool is called now? -->
-If at least one listing is found, the Agent then selects the best match and calls the Tool "suggets_outfit(new_item, wardrobe)". The Tool returns a non-empty string with the outfit suggestion, given by the thrifted item and the User's wardrobe. If the wardrobe is empty, the Tool then provides general styling advice for the item rather than raising an exception or returning an empty string.
+If at least one listing is found, the Agent then selects the best match and calls the Tool "suggest_outfit(new_item, wardrobe)". The Tool returns a non-empty string with the outfit suggestion, given by the thrifted item and the User's wardrobe. If the wardrobe is empty, the Tool then provides general styling advice for the item rather than raising an exception or returning an empty string.
 
 **Step 3:**
 <!-- Continue until the full interaction is complete -->
@@ -196,3 +198,7 @@ The Agent then calls the tool "create_fit_card(outfit, new_item)" using the outf
 The user then sees a Card with a Caption about the Suggested Outfit Fit.
 
 The User then sees the Recommended Thrifted Item, an Outfit suggestion that explains how to style it, and a shareable fit-card caption. If no items are found, the User instead recieves guidance on how to refine their search.
+
+## FitFindr Purpose
+<!-- Write a 2-3 Sentence Description of what FitFindr needs to do -->
+FitFindr is a Multi-Tool AI Agent that basically, helps the User to find Items (Clothings) and create a Fit (a style on how to wear them). The AI Agent calls certain Tools to begin the Workflow.
