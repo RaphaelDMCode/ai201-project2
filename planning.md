@@ -85,6 +85,9 @@ If the Outfit iither Empty or Missing, the Tool returns a Descriptive Error Mess
 
 **How does your agent decide which tool to call next?**
 <!-- Describe the logic your planning loop uses. What does it look at? What conditions change its behavior? How does it know when it's done? -->
+
+**Query parsing (Step 2):** Before any tool runs, the Agent parses the raw User Query into a `description`, `size`, and `max_price` using deterministic Regex (not the LLM). This choice keeps the step that decides *which* listings get searched predictable, fast, and testable offline. Price is read from phrases like "under $30" / "below 30" / "less than $30" (or a bare "$30"), size from an explicit "size M" phrase or a standalone size token (XS, S, M, L, XL...), and those phrases are stripped from the description so they don't pollute the keyword scoring.
+
 The Agent begins by calling Tool 1: search_listings() using the User Query's Description, Size and Price Preferences. If the Tool returns an Empty List, the Agent stops the Workflow and suggets the User to adjust their Search Criteria. If Matching Listings are found, the Agent selects the most Relevant Listings and calls Tool 2: suggest_outfit(), using the selected Item and the User's Wardrobe. Once an Outfit Fit/Recommendation is given, the Agent then calls Tool 3: create_fit_card(), to generate a Shareable Caption. The Workflow then ends after the Fit Card is successfully created and presented to the User.
 
 ---
