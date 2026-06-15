@@ -26,7 +26,37 @@ load_dotenv()
 _STOP_WORDS = {
     "a", "an", "the", "and", "or", "for", "with", "of", "in", "on", "to",
     "i", "im", "looking", "want", "need", "some", "any", "my", "me",
+    "that", "this", "is", "are", "be", "it", "its", "thats", "you", "your",
 }
+
+
+def _tokenize(text: str) -> list[str]:
+    """
+    Turn free text into a list of meaningful keyword tokens.
+
+    Why this matters: scoring keyword overlap is meaningless if junk tokens
+    leak in. Two phrasings that mean the same thing ("designer ballgown" vs.
+    "I'm looking for a designer ballgown") must tokenize to the same useful
+    keywords, or the same description would produce different search results.
+
+    So we:
+      - lowercase and split on non-alphanumeric characters,
+      - drop stop words (common filler like "the", "is", "that"),
+      - drop tokens shorter than 2 characters. A stray "m" (from splitting
+        "I'm") or "s" must never become a keyword — single letters match
+        almost everything and silently corrupt the results.
+      - lightly singularize ("tees" → "tee", "boots" → "boot") so plurals
+        still match. Applied to BOTH the query and the listing text, so it
+        only ever helps matching, never hurts it.
+    """
+    tokens = []
+    for word in re.findall(r"[a-z0-9]+", text.lower()):
+        if len(word) < 2 or word in _STOP_WORDS:
+            continue
+        if len(word) > 3 and word.endswith("s"):
+            word = word[:-1]  # crude plural → singular
+        tokens.append(word)
+    return tokens
 
 
 # ── Groq client ───────────────────────────────────────────────────────────────
@@ -78,12 +108,9 @@ def search_listings(
     """
     listings = load_listings()
 
-    # Tokenize the query into meaningful keywords (lowercase, no stop words).
-    keywords = [
-        word
-        for word in re.findall(r"[a-z0-9]+", description.lower())
-        if word not in _STOP_WORDS
-    ]
+    # Tokenize the query into meaningful keywords (see _tokenize: stop words and
+    # sub-2-char junk like a stray "m" from "I'm" are dropped, plurals normalized).
+    keywords = _tokenize(description)
 
     results = []
     for listing in listings:
@@ -97,6 +124,10 @@ def search_listings(
                 continue
 
         # --- Score by keyword overlap across the listing's text fields ---
+        # Tokenize the listing text into a WHOLE-WORD set and count how many
+        # query keywords appear as full words. Whole-word matching (not
+        # substring) is what stops "m" from matching "su[mm]er" — so leftover
+        # filler in a phrasing can no longer inflate or change the results.
         searchable = " ".join([
             listing["title"],
             listing["description"],
@@ -104,9 +135,10 @@ def search_listings(
             " ".join(listing["style_tags"]),
             " ".join(listing["colors"]),
             listing["brand"] or "",
-        ]).lower()
+        ])
+        searchable_words = set(_tokenize(searchable))
 
-        score = sum(1 for word in keywords if word in searchable)
+        score = sum(1 for word in keywords if word in searchable_words)
 
         # Drop listings with no relevant matches.
         if score == 0:

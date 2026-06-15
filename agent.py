@@ -102,10 +102,61 @@ def _new_session(query: str, wardrobe: dict) -> dict:
         "outfit_suggestion": None,   # string returned by suggest_outfit
         "fit_card": None,            # string returned by create_fit_card
         "error": None,               # set if the interaction ended early
+        # --- planning-loop bookkeeping ---
+        "searched": False,           # has search_listings run at least once?
+        "relaxations": [],           # which fallback relaxations we've applied
+        "trace": [],                 # ordered list of actions the planner took
     }
 
 
 # ── planning loop ─────────────────────────────────────────────────────────────
+
+def _decide_next_action(session: dict) -> str:
+    """
+    The planner. Looks at the current session state and decides which tool (or
+    control action) should run next — it does NOT follow a fixed script.
+
+    The agent re-enters this function after every action, so the path through
+    the tools depends entirely on what previous tools returned:
+
+        - Nothing parsed yet                  → "parse"
+        - Parsed but not searched             → "search"
+        - Searched, empty, can still loosen   → "relax_search"  (fallback)
+        - Searched, empty, nothing left to do → "fail"
+        - Got results but none selected       → "select"
+        - Item selected, no outfit yet        → "suggest_outfit"
+        - Outfit ready, no fit card yet       → "create_fit_card"
+        - Everything produced                 → "done"
+
+    Returns the name of the next action as a string.
+    """
+    if not session["parsed"]:
+        return "parse"
+
+    if not session["searched"]:
+        return "search"
+
+    # Search has run. If it came back empty, try a fallback before giving up:
+    # loosen the most restrictive filter we haven't relaxed yet.
+    if not session["search_results"]:
+        parsed = session["parsed"]
+        if parsed.get("size") is not None and "size" not in session["relaxations"]:
+            return "relax_search"
+        if parsed.get("max_price") is not None and "price" not in session["relaxations"]:
+            return "relax_search"
+        return "fail"
+
+    if session["selected_item"] is None:
+        return "select"
+
+    if session["outfit_suggestion"] is None:
+        return "suggest_outfit"
+
+    if session["fit_card"] is None:
+        return "create_fit_card"
+
+    return "done"
+
 
 def run_agent(query: str, wardrobe: dict) -> dict:
     """
@@ -152,42 +203,75 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # Step 1 — fresh session: the single source of truth for this interaction.
+    # Fresh session: the single source of truth for this interaction.
     session = _new_session(query, wardrobe)
 
-    # Step 2 — parse the query into search parameters (regex, see _parse_query).
-    session["parsed"] = _parse_query(query)
-    parsed = session["parsed"]
+    # The planning loop. Each pass asks the planner what to do next based on the
+    # CURRENT session state, runs that one action, then loops. The sequence of
+    # tools is therefore decided by what each tool returns — not hard-coded here.
+    # `terminal` actions ("done"/"fail") break the loop.
+    while True:
+        action = _decide_next_action(session)
+        session["trace"].append(action)
 
-    # Step 3 — search, then BRANCH on the result. An empty result ends the run
-    # early; we never hand empty input to suggest_outfit.
-    session["search_results"] = search_listings(
-        description=parsed["description"],
-        size=parsed["size"],
-        max_price=parsed["max_price"],
-    )
-    if not session["search_results"]:
-        session["error"] = (
-            "No listings found. Try adjusting your search criteria — broaden the "
-            "description, loosen the size, or raise your price ceiling."
-        )
-        return session
+        if action == "parse":
+            # Turn the natural-language query into search parameters.
+            session["parsed"] = _parse_query(query)
 
-    # Step 4 — select the most relevant listing (results are sorted best-first).
-    session["selected_item"] = session["search_results"][0]
+        elif action == "search":
+            parsed = session["parsed"]
+            session["search_results"] = search_listings(
+                description=parsed["description"],
+                size=parsed["size"],
+                max_price=parsed["max_price"],
+            )
+            session["searched"] = True
 
-    # Step 5 — style the selected item against the user's wardrobe.
-    session["outfit_suggestion"] = suggest_outfit(
-        session["selected_item"], wardrobe
-    )
+        elif action == "relax_search":
+            # FALLBACK: the last search returned nothing. Rather than failing
+            # immediately, loosen the most restrictive unrelaxed filter and try
+            # again — size first, then the price ceiling.
+            parsed = session["parsed"]
+            if parsed.get("size") is not None and "size" not in session["relaxations"]:
+                session["relaxations"].append("size")
+                parsed["size"] = None
+            elif parsed.get("max_price") is not None and "price" not in session["relaxations"]:
+                session["relaxations"].append("price")
+                parsed["max_price"] = None
+            session["search_results"] = search_listings(
+                description=parsed["description"],
+                size=parsed["size"],
+                max_price=parsed["max_price"],
+            )
 
-    # Step 6 — turn the outfit into a shareable fit card.
-    session["fit_card"] = create_fit_card(
-        session["outfit_suggestion"], session["selected_item"]
-    )
+        elif action == "select":
+            # Pick the most relevant listing (results are sorted best-first).
+            session["selected_item"] = session["search_results"][0]
 
-    # Step 7 — return the completed session (error is still None on success).
-    return session
+        elif action == "suggest_outfit":
+            session["outfit_suggestion"] = suggest_outfit(
+                session["selected_item"], wardrobe
+            )
+
+        elif action == "create_fit_card":
+            session["fit_card"] = create_fit_card(
+                session["outfit_suggestion"], session["selected_item"]
+            )
+
+        elif action == "fail":
+            # Searched (and exhausted our fallbacks) with no matches. Tell the
+            # user how to broaden their request; never proceed on empty input.
+            relaxed = ", ".join(session["relaxations"])
+            note = f" (even after loosening: {relaxed})" if relaxed else ""
+            session["error"] = (
+                f"No listings found{note}. Try adjusting your search criteria — "
+                "broaden the description, loosen the size, or raise your price ceiling."
+            )
+            return session
+
+        elif action == "done":
+            # All outputs produced; error stays None on success.
+            return session
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────

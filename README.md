@@ -94,7 +94,14 @@ Output:
 - Returns a Descriptive Error Message if the Outfit Information is Missing.
 
 [Planning Loop Explanation]
-FitFindr follows a Sequence of Planning Loop that decides which of the Tools to call based on the result of the previous Action. The Agent begins by calling search_listings()using the user's Description, Size, and Price preferences. If the Tool were to return an Empty List, the Workflow stops and the Agent ask the User to refine their Search Criteria. If the Matching Listings are found, the Agent then selects the most relevant listings and calls suggest_outfit() using the Selected item and User's Wardrobe Information, Once an Outfit Fit/Recommendation is generated, the Agent calls create_fit_card() to generate a Short Shareable Caption. The Workflow then ends with once the Fit Card has been generated and presented to the User.
+FitFindr runs a real planning loop, not a fixed script. `run_agent()` repeatedly calls a planner, `_decide_next_action(session)`, which inspects the current session state and returns the single next action to take. The agent runs that one action, updates the session, then loops back and asks the planner again — so the path through the tools is decided by what each tool actually returned, not hard-coded in order.
+
+On a normal request the trace is: `parse → search → select → suggest_outfit → create_fit_card → done`. But the planner branches on context:
+
+- If `search_listings()` returns an empty list, the agent does NOT immediately give up. The planner first tries a fallback action, `relax_search`: it loosens the most restrictive filter it hasn't relaxed yet — size first, then the price ceiling — and searches again. This is why a query like "graphic tee size XXXL" still succeeds (trace: `parse → search → relax_search → select → ... → done`): the impossible size is dropped and the search retries.
+- Only after every relaxation is exhausted and results are still empty does the planner return `fail`, ending the run early with a message telling the user how to broaden their search (and which filters were already loosened).
+
+Because the planner is re-consulted after every step, the same code naturally handles the happy path, the "loosen and retry" recovery path, and the give-up path without any of them being a fixed sequence. The full ordered list of actions taken is recorded in `session["trace"]` for inspection.
 
 
 [State Management Approach]
@@ -104,9 +111,14 @@ The Agent mantains a Session State that stores the User's Query, the Search Resu
 [Error Handling per Tool with at least Once Concrete Example from Testing]
 | Tool | Failure mode | Agent response |
 |------|-------------|----------------|
-| search_listings | No results match the query | Agent asks the User to refine/adjust their Search Criteria |
+| search_listings | No results match the query | FALLBACK FIRST: the planner runs `relax_search`, loosening size then the price ceiling and retrying. Only if results are still empty after every relaxation does the Agent give up and ask the User to refine their Search Criteria. |
 | suggest_outfit | Wardrobe is empty | Agent offers a General Styling Advice for the selected Item |
 | create_fit_card | Outfit input is missing or incomplete | Agent returns a Descriptive Error Message, instead of raising an Exception |
+
+Concrete examples from testing:
+- `search_listings` fallback: query "graphic tee size XXXL" returns no exact matches → planner relaxes the size filter → finds graphic tees and continues. Trace: `parse → search → relax_search → select → suggest_outfit → create_fit_card → done`.
+- `search_listings` give-up: query "designer ballgown size XXS under $1" finds nothing even after loosening size and price → `fail` with a refine-your-search message. Trace: `parse → search → relax_search → relax_search → fail`.
+- `create_fit_card` guard: calling it with an empty outfit string returns an error message rather than crashing (see `test_create_fit_card_empty_outfit`).
 
 
 [Spec Reflection]
@@ -118,4 +130,6 @@ The Implemnation I had generated using Claude, matches the Idea/Spec of mine. Th
 Instance 1: When trying to implement the Agent Tools, I gave out the Information of the Tool Usage to Claude, along with the Provided Context and Information that is already provided inside of the Tool Function, in order to implement the Tool and work a it intended to. At first, I made a mistake on my Prompt. Instead of it focusing on One Tool at the moment, for better understanding and work, it decide to implement the other Tools as well, and tried connecting because as I said, I gave context to what it is about and such. To fix this, I went back and Edit the Prompt to my liking, focusing on one Tool for now, and asking it Ideas and such.
 
 Instance 2: Regarding the Agent Diagram Structure, I used the Model given by CodePath. After some editing, I gave it to ChatGTP to evaluate my Diagram, to see what needs to be refined or changed. At first, it gave me a different Structure, a Paragraph instead of a Diagram. But I changed it, and even add an addiotional note to some Parts I do not understand. I keep redoing the Diagram until I get a basic understanding of it.
+
+Intance 2: When I tried to check to see if I have aqquired all the requirements for this Projects, I use AI to double test my evaluation whether ot not I aquired all of it. It turns out, the [Planning Loop] Requirement needs a bit of refactoring. I asked Claude why it needs Refactoring/Changing to better understand why I did not aqquire it. Claude then gave me an Option to choose (I forgot what the Options are) regarding the Missing Requirement of mine, and what to do with it. Anyway, Claude helped me fix the [Planning Loop] of mine.
 
